@@ -1,5 +1,6 @@
 # wise-paas-ota-agent-android
-we aims to provide a solution for wise-paas ota agent about risc android.Requirement<br />
+we aims to provide a solution for wise-paas ota agent about risc android system.<br />
+【Requirement】<br />
 I take rsb4220(TI am335x based) for example and it runs android 4.2<br />
 【Architecture】<br />
 The overall architecture is here:<br />
