@@ -6,9 +6,9 @@ The overall architecture is here:<br />
 http://ess-wiki.advantech.com.tw/view/WISE-PaaS/OTA_Agent%EF%BC%88Android%EF%BC%89 <br />
 【Including】<br />
 This repo is including:<br />
-* android java-language based OtaService<br />
-* android c-language based OtaClient(for test)<br />
-* android c-language based Ota-agent<br />
+1.android java-language based OtaService<br />
+2.android c-language based OtaClient(for test)<br />
+3.android c-language based Ota-agent<br />
 【Directory】<br />
 /paches:<br />
 source code for OtaService and OtaClient(for test)<br />
