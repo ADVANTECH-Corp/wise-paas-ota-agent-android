@@ -59,7 +59,7 @@ Index: external/servertest/servertest.c
 ===================================================================
 --- external/servertest/servertest.c	(revision 0)
 +++ external/servertest/servertest.c	(working copy)
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,145 @@
 +/*
 +** Copyright 2008, The Android Open Source Project
 +** Copyright (C) 2013 Freescale Semiconductor, Inc.
@@ -143,7 +143,8 @@ Index: external/servertest/servertest.c
 +        ALOGI(LOG_TAG "    systembackup -- mean system backup\n");
 +        ALOGI(LOG_TAG "    wipedata -- mean wipe data partition\n");
 +        ALOGI(LOG_TAG "    wipecache -- mean wipe cache partition\n");
-+        ALOGI(LOG_TAG "    install /cache/update.zip -- mean update system and /cache/update.zip is the option\n");
++        ALOGI(LOG_TAG "    install /cache/update.zip -- means update system and /cache/update.zip is the option\n");
++        ALOGI(LOG_TAG "    appinstall /cache/test.apk -- means install/reinstall app and /cache/test.apk is the option\n");
 +}
 +
 +int main(const int argc, const char *argv[]) {
@@ -166,7 +167,7 @@ Index: external/servertest/servertest.c
 +        }
 +    }
 +    else if(argc == 3){
-+        if(strncmp(argv[1], "install", strlen("install"))){
++        if(strncmp(argv[1], "install", strlen("install")) && strncmp(argv[1], "appinstall", strlen("appinstall"))){
 +                usage();
 +                return -1;
 +        }
@@ -269,6 +270,27 @@ Index: frameworks/base/Android.mk
  	core/java/android/service/dreams/IDreamManager.aidl \
  	core/java/android/service/dreams/IDreamService.aidl \
  	core/java/android/service/wallpaper/IWallpaperConnection.aidl \
+Index: frameworks/base/api/current.txt
+===================================================================
+--- frameworks/base/api/current.txt	(revision 61)
++++ frameworks/base/api/current.txt	(working copy)
+@@ -16132,6 +16132,16 @@
+     method public boolean quit();
+   }
+ 
++  public abstract interface IAdvOtaService implements android.os.IInterface {
++  }
++
++  public static abstract class IAdvOtaService.Stub extends android.os.Binder implements android.os.IAdvOtaService {
++    ctor public IAdvOtaService.Stub();
++    method public android.os.IBinder asBinder();
++    method public static android.os.IAdvOtaService asInterface(android.os.IBinder);
++    method public boolean onTransact(int, android.os.Parcel, android.os.Parcel, int) throws android.os.RemoteException;
++  }
++
+   public abstract interface IBinder {
+     method public abstract void dump(java.io.FileDescriptor, java.lang.String[]) throws android.os.RemoteException;
+     method public abstract void dumpAsync(java.io.FileDescriptor, java.lang.String[]) throws android.os.RemoteException;
 Index: frameworks/base/core/java/android/os/IAdvOtaService.aidl
 ===================================================================
 --- frameworks/base/core/java/android/os/IAdvOtaService.aidl	(revision 0)
@@ -282,7 +304,7 @@ Index: frameworks/base/services/java/com/android/server/AdvOtaService.java
 ===================================================================
 --- frameworks/base/services/java/com/android/server/AdvOtaService.java	(revision 0)
 +++ frameworks/base/services/java/com/android/server/AdvOtaService.java	(working copy)
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,304 @@
 +/*
 + * Copyright (C) 2008 The Android Open Source Project
 + *
@@ -351,9 +373,15 @@ Index: frameworks/base/services/java/com/android/server/AdvOtaService.java
 +import android.view.WindowManager;
 +import android.provider.Settings;
 +import android.content.ContentResolver;
-+
++import android.content.pm.PackageManager;
++import android.net.Uri;
++import android.os.RemoteException;
 +import  android.os.PowerManager;
 +import android.os.SystemClock;
++import java.util.ArrayList;
++import java.util.List;
++import android.content.pm.PackageInfo;
++import android.content.pm.ApplicationInfo;
 +
 +public final class AdvOtaService extends IAdvOtaService.Stub {
 +    private static final String TAG = "AdvOtaService";
@@ -364,6 +392,7 @@ Index: frameworks/base/services/java/com/android/server/AdvOtaService.java
 +    LocalSocket mSocket;
 +    Context mContext = null;
 +    Thread serverThread = null;
++    private PackageManager mPackageManager;
 +    //private ServerSocket serverSocket;
 +    private LocalServerSocket serverSocket;
 +    private static final int SERVERPORT = 6000;
@@ -378,17 +407,27 @@ Index: frameworks/base/services/java/com/android/server/AdvOtaService.java
 +    };
 +
 +    public enum Advaction {
-+    systembackup,wipedata,wipecache,install;
++    systembackup,wipedata,wipecache,install,appinstall;
 +
 +    public static Advaction getAdvaction(String advaction){
 +       return valueOf(advaction.toLowerCase());
 +    	}
 +    }
 +
++    class AppInfo {  
++    	private int versionCode = 0;    
++    	//名称 
++    	private String appName = "";   
++    	//包 
++    	private String packageName = "";   
++    	private String versionName = "";  
++    } 
++
 +    //service init
 +    public AdvOtaService(Context context) {
 +	mContext = context;
 +	Slog.i(TAG, "AdvOtaService init...");
++	mPackageManager = mContext.getPackageManager();
 +
 +	final IntentFilter userFilter = new IntentFilter();
 +        userFilter.addAction(TEST_ACTION);
@@ -491,6 +530,58 @@ Index: frameworks/base/services/java/com/android/server/AdvOtaService.java
 +         						}
 +							*/
 +							RecoverySystem.installPackage(mContext, recoveryFile);
++							break;
++						case appinstall:
++							Slog.i(TAG, "switch appinstall");
++                                                        String strfile = asplit[1].trim();
++                                                        String newVersionName, newpackageName;
++                                                        String oldVersionName = null;
++							int  newVersionCode = 0, oldVersionCode = 0;
++						    	int isinstall = 0;	
++							//get apk info 
++							PackageInfo info = mPackageManager.getPackageArchiveInfo(strfile, PackageManager.GET_ACTIVITIES);
++							if(info != null){
++								ApplicationInfo appInfo = info.applicationInfo;
++								newpackageName = appInfo.packageName;
++								newVersionName = info.versionName;
++								newVersionCode = info.versionCode;
++								Slog.i(TAG, "ApkName: "+newpackageName+"; versionName: "+newVersionName+"; versionCode: "+Integer.toString(newVersionCode));	
++								
++								//get installed package info
++                                                        	List<PackageInfo> packages = mPackageManager.getInstalledPackages(0);
++                                                       	 	for(int i=0;i<packages.size();i++) {
++                                                                	PackageInfo packageInfo = packages.get(i);
++                                                               	 	AppInfo tmpInfo =new AppInfo();
++                                                                	tmpInfo.appName = packageInfo.applicationInfo.loadLabel(mPackageManager).toString();
++                                                                	tmpInfo.packageName = packageInfo.packageName;
++                                                                	tmpInfo.versionName = packageInfo.versionName;
++                                                                	tmpInfo.versionCode = packageInfo.versionCode;
++                                                                	Slog.i(TAG, "Name: "+tmpInfo.packageName+"; versionName: "+tmpInfo.versionName+"; versionCode: "+Integer.toString(tmpInfo.versionCode));
++                                                        		if(tmpInfo.packageName.equals(newpackageName)){
++										oldVersionName = tmpInfo.versionName;
++										oldVersionCode = tmpInfo.versionCode;
++										break;
++									}
++								}
++                                                        	//get installed package info end
++								if(oldVersionName == null){
++									Slog.i(TAG, "get installed apk info failed, this apk may not installed before");
++									isinstall = 1;
++								}
++							}
++							else{
++								Slog.i(TAG, "getPackageArchiveInfo failed, may be invalid apk file");
++								return;
++							}
++							//get apk info end
++						
++							Slog.i(TAG, "install apk name: " + strfile);
++							File apkfile = new File(strfile);
++							if(isinstall == 1 || newVersionCode >= oldVersionCode){
++								//truely need install the apk
++								Slog.i(TAG, "now begin install the apk "+strfile);
++								mPackageManager.installPackage(Uri.fromFile(apkfile), null, PackageManager.INSTALL_REPLACE_EXISTING, null);
++							}
 +							break;
 +						default:
 +							Slog.i(TAG, "error paramer");
